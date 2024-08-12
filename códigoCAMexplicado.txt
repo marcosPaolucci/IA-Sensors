@@ -1,0 +1,96 @@
+#include <WebServer.h> //são bibliotecas instaladas ao instalar a placa ESP32
+#include <WiFi.h>
+#include <esp32cam.h>
+ 
+const char *WIFI_SSID = "nome da sua rede"; // o asterisco é um ponteiro, ele reserva uma sequencia de memória. 
+const char *WIFI_PASS = "senha do seu wifi";
+// é obrigatório que o WiFi tenha a frequencia 2,4Ghz
+// o seu computador, a camera e o celular devem fazer parte da mesma rede
+ 
+WebServer server(80);
+//a porta 80 é um serviço HTTP. Por isso vc usa o navegador. 
+// quando vc pega o IP da camera bem um http://
+ 
+static auto loRes = esp32cam::Resolution::find(320, 240); //invocando uma matriz de 320 por 240 pontos
+static auto midRes = esp32cam::Resolution::find(350, 530); // e nessa matriz teremos os pixels da camera
+static auto hiRes = esp32cam::Resolution::find(800, 600); // essa matriz é do tipo memória estática
+void serveJpg()  // função carregada pelas funções de resolução abaixo
+{
+  auto frame = esp32cam::capture();
+  if (frame == nullptr) {
+    Serial.println("CAPTURE FAIL");
+    server.send(503, "", "");
+    return;
+  }
+  Serial.printf("CAPTURE OK %dx%d %db\n", frame->getWidth(), frame->getHeight(), static_cast<int>(frame->size()));
+  // o %d vai ser substituidos pelos valores após a virgulas respectivamente.
+ 
+  server.setContentLength(frame->size());
+  server.send(200, "image/jpeg");
+  WiFiClient client = server.client();
+  frame->writeTo(client);
+}
+ 
+void handleJpgLo()
+{
+  if (!esp32cam::Camera.changeResolution(loRes)) { // testa se a matriz de pixel "deu ruim"
+    Serial.println("SET-LO-RES FAIL");
+  }
+  serveJpg(); // se deu bom carrega função
+}
+ 
+void handleJpgHi()
+{
+  if (!esp32cam::Camera.changeResolution(hiRes)) {
+    Serial.println("SET-HI-RES FAIL");
+  }
+  serveJpg();
+}
+ 
+void handleJpgMid()
+{
+  if (!esp32cam::Camera.changeResolution(midRes)) {
+    Serial.println("SET-MID-RES FAIL");
+  }
+  serveJpg();
+}
+ 
+ 
+void  setup(){
+  Serial.begin(115200);// taxa de transmissão entre plaquinha e porta usb
+  // esse número vai interferir no monitor serial. As taxas devem ser iguais para os caracteres para correta leitura
+  Serial.println();
+  {
+    using namespace esp32cam;
+    Config cfg;                  //cria o arquivo de configuração
+    cfg.setPins(pins::AiThinker); // setas os pinos do AI Thinker
+    cfg.setResolution(hiRes);     // seta a resolução
+    cfg.setBufferCount(2);       //seta o buffer, que é a memória elastísca de ajuda na entrada de dados
+    cfg.setJpeg(80);            // as imagens estarão na porta 80
+ 
+    bool ok = Camera.begin(cfg); // inicializo a camera com o arquivo cfg recém criado e guardo a resposta(true ou false) na varíavel OK;
+    Serial.println(ok ? "CAMERA OK, MAS SE NAO CARREGA IP, ROTEADOR PRECISA SER DE 2.4GHz. Se ficar nessa msg, seu roteador é de 5GHz. Tente usar o seu celular com alternativa." : "CAMERA FAIL, significa que seu flat cable está com defeito. Solucao, trocar essa placa");
+	// imprime um msg de acordo com o OK. Se true, imprime o 1o trecho após o "?". Se false, imprime o 2º trecho após o ":"
+  }
+  WiFi.persistent(false); // função que busca  a todo momemnto o WIFI, quando cair por exemplo. Neste esá false.
+  WiFi.mode(WIFI_STA);   // o tipo de wifi criado é "standard", qué o comum ou seja como cliente.
+  WiFi.begin(WIFI_SSID, WIFI_PASS); // conecta o wifi com as credenciais já declaradas.
+  while (WiFi.status() != WL_CONNECTED) { // procura o wifi
+    delay(500); // a cada 0,5s, ele imprime um ponto. Mas esse ponto está definido na biblioteca, não é possível alterar o caractere.
+  } // quando o método wifi.status retornar algo igual de WL_CONNECTED, ele sai do loop
+  Serial.print("http://");
+  Serial.print(WiFi.localIP());
+  Serial.println("/cam-hi.jpg");
+ 
+  server.on("/cam-lo.jpg", handleJpgLo); // habilitando a fubção "server.on" com as opções disponíveis.
+  server.on("/cam-hi.jpg", handleJpgHi);
+  server.on("/cam-mid.jpg", handleJpgMid);
+ 
+  server.begin(); // inicializa o servidor
+}
+ 
+void loop()
+{
+  server.handleClient(); //  é uma função interna da biblioteca que irá executar o cliente
+ // a taxa de looping das fotos é o limite técnico do ESP32-CAM. Não tem como melhorar
+}
